@@ -47,7 +47,7 @@ run_spark_submit() {
     --conf spark.ui.prometheus.enabled=true \
     --conf spark.executor.processTreeMetrics.enabled=true \
     --packages org.mongodb.spark:mongo-spark-connector_2.12:2.4.1,ch.cern.sparkmeasure:spark-measure_2.12:0.16 \
-    --py-files /app/dependencies.zip,/app/metrics.py,/app/tools.py \
+    --py-files /app/dependencies.zip,/app/metrics.py,/app/tools.py,/app/schema_apple.py \
     --conf spark.executorEnv.MONGO_USER=$MONGO_USER \
     --conf spark.executorEnv.MONGO_PASS=$MONGO_PASS\
     --conf spark.executorEnv.MONGO_HOST=mongodb \

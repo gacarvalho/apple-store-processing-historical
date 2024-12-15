@@ -6,12 +6,12 @@ import subprocess
 import pyspark.sql.functions as F
 from urllib.parse import quote_plus
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StringType
 from pyspark.sql.functions import coalesce, collect_list, struct, array, col, count, when, to_date
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType
 from datetime import datetime
 from pathlib import Path
 from unidecode import unidecode
+from schema_apple import apple_store_schema_silver
 
 # Função para remover acentos
 def remove_accents(s):
@@ -44,6 +44,18 @@ def processing_reviews(df: DataFrame):
 
     return df_select
 
+def get_schema(df, schema):
+    """
+    Obtém o DataFrame a seguir o schema especificado.
+    """
+    for field in schema.fields:
+        if field.dataType == IntegerType():
+            df = df.withColumn(field.name, df[field.name].cast(IntegerType()))
+        elif field.dataType == StringType():
+            df = df.withColumn(field.name, df[field.name].cast(StringType()))
+    return df.select([field.name for field in schema.fields])
+
+
 def save_reviews(reviews_df: DataFrame, directory: str):
     """
     Salva os dados do DataFrame no formato Delta no diretório especificado.
@@ -70,8 +82,14 @@ def save_dataframe(df, path, label):
     Salva o DataFrame em formato parquet e loga a operação.
     """
     try:
+        schema = apple_store_schema_silver()
+
+        # Alinhar o DataFrame ao schema definido
+        df = get_schema(df, schema)
+
         if df.limit(1).count() > 0:  # Verificar existência de dados
             logging.info(f"Salvando dados {label} para: {path}")
+            df.printSchema()
             save_reviews(df, path)
         else:
             logging.warning(f"Nenhum dado {label} foi encontrado!")
