@@ -1,6 +1,6 @@
 DOCKER_NETWORK = hadoop-network
 ENV_FILE = hadoop.env
-VERSION_REPOSITORY_DOCKER = 0.0.3
+VERSION_REPOSITORY_DOCKER = 1.0.0
 
 current_branch := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "default-branch")
 
@@ -9,7 +9,7 @@ create-network:
 	docker network create hadoop_network
 
 build-app-silver-reviews-apple-store:
-	docker build -t iamgacarvalho/dmc-app-silver-reviews-apple-store:$(VERSION_REPOSITORY_DOCKER)  ./application/apple-store-processing-historical
+	docker build -t iamgacarvalho/dmc-app-silver-reviews-apple-store:$(VERSION_REPOSITORY_DOCKER)  .
 	docker push iamgacarvalho/dmc-app-silver-reviews-apple-store:$(VERSION_REPOSITORY_DOCKER)
 
 

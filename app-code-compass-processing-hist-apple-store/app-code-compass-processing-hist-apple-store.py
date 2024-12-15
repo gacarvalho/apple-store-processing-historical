@@ -33,7 +33,8 @@ def main():
             valid_df, invalid_df, validation_results = validate_ingest(spark, df_processado)
 
             valid_df.show(50, truncate=False)
-            
+            invalid_df.show(50, truncate=False)
+
             # Salvar dados válidos
             save_dataframe(valid_df, path_target, "valido")
 
