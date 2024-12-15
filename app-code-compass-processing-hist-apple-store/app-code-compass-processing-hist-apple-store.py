@@ -49,10 +49,10 @@ def main():
             # Salvar métricas no MongoDB
             save_metrics(spark, metrics_json)
 
-            logging.info(f"Métricas da aplicação: {metrics_json}")
+            logging.info(f"[*] Métricas da aplicação: {metrics_json}")
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}", exc_info=True)
+        logging.error(f"[*] An error occurred: {e}", exc_info=True)
     finally:
         spark.stop()
 
@@ -65,7 +65,7 @@ def spark_session():
         return spark
 
     except Exception as e:
-        logging.error(f"Failed to create SparkSession: {e}", exc_info=True)
+        logging.error(f"[*] Failed to create SparkSession: {e}", exc_info=True)
         raise
 
 if __name__ == "__main__":

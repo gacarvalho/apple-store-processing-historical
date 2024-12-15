@@ -68,12 +68,10 @@ def save_reviews(reviews_df: DataFrame, directory: str):
         # Verifica se o diretório existe e cria-o se não existir
         Path(directory).mkdir(parents=True, exist_ok=True)
 
-        # Escrever os dados no formato Delta
-        # reviews_df.write.format("delta").mode("overwrite").save(directory)
         reviews_df.write.option("compression", "snappy").mode("overwrite").parquet(directory)
-        logging.info(f"Dados salvos em {directory} no formato Delta")
+        logging.info(f"[*] Dados salvos em {directory} no formato Delta")
     except Exception as e:
-        logging.error(f"Erro ao salvar os dados: {e}")
+        logging.error(f"[*] Erro ao salvar os dados: {e}")
         exit(1)
 
 
@@ -88,13 +86,13 @@ def save_dataframe(df, path, label):
         df = get_schema(df, schema)
 
         if df.limit(1).count() > 0:  # Verificar existência de dados
-            logging.info(f"Salvando dados {label} para: {path}")
+            logging.info(f"[*] Salvando dados {label} para: {path}")
             df.printSchema()
             save_reviews(df, path)
         else:
-            logging.warning(f"Nenhum dado {label} foi encontrado!")
+            logging.warning(f"[*] Nenhum dado {label} foi encontrado!")
     except Exception as e:
-        logging.error(f"Erro ao salvar dados {label}: {e}", exc_info=True)
+        logging.error(f"[*] Erro ao salvar dados {label}: {e}", exc_info=True)
 
 def save_metrics(spark, metrics_json):
     """
@@ -103,9 +101,9 @@ def save_metrics(spark, metrics_json):
     try:
         metrics_data = json.loads(metrics_json)
         write_to_mongo(metrics_data, "dt_datametrics_compass")
-        logging.info(f"Métricas da aplicação salvas: {metrics_json}")
+        logging.info(f"[*] Métricas da aplicação salvas: {metrics_json}")
     except json.JSONDecodeError as e:
-        logging.error(f"Erro ao processar métricas: {e}", exc_info=True)
+        logging.error(f"[*] Erro ao processar métricas: {e}", exc_info=True)
 
 def write_to_mongo(dados_feedback: dict, table_id: str):
     """
@@ -146,7 +144,7 @@ def write_to_mongo(dados_feedback: dict, table_id: str):
         elif isinstance(dados_feedback, list):  # Verifica se os dados são uma lista
             collection.insert_many(dados_feedback)
         else:
-            print("Os dados devem ser um dicionário ou uma lista de dicionários.")
+            print("[*] Os dados devem ser um dicionário ou uma lista de dicionários.")
     finally:
         # Garante que a conexão será fechada
         client.close()
@@ -162,7 +160,7 @@ def path_exists() -> bool:
     hdfs_path_exists = os.system(f"hadoop fs -test -e {historical_data_path} ") == 0
 
     if not hdfs_path_exists:
-        print(f"O caminho {historical_data_path} não existe no HDFS.")
+        print(f"[*] O caminho {historical_data_path} não existe no HDFS.")
         return False  # Retorna False se o caminho não existir no HDFS
 
     try:
@@ -174,10 +172,10 @@ def path_exists() -> bool:
 
         # Verificar se há partições "odate="
         if "odate=" in result.stdout:
-            print("Partições 'odate=*' encontradas no HDFS.")
+            print("[*] Partições 'odate=*' encontradas no HDFS.")
             return True  # Retorna True se as partições forem encontradas
         else:
-            print("Nenhuma partição com 'odate=*' foi encontrada no HDFS.")
+            print("[*] Nenhuma partição com 'odate=*' foi encontrada no HDFS.")
             return False  # Retorna False se não houver partições
 
     except subprocess.CalledProcessError as e:
