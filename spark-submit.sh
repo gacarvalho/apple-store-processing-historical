@@ -64,7 +64,7 @@ run_spark_submit() {
     --conf spark.yarn.appMasterEnv.MONGO_PORT=27017 \
     --conf spark.yarn.appMasterEnv.MONGO_DB=compass \
     --name dmc-app-silver-reviews-apple-store \
-   /app/app-code-compass-processing-hist-apple-store.py"
+   /app/repo_trfmation_apple_store.py"
 
   # Exibe o comando para depuração
   log "Comando spark-submit que será executado: $spark_cmd"

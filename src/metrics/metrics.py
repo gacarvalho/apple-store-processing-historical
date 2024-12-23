@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import  col, count, when
 from pyspark.sql import functions as F
 from sparkmeasure import StageMetrics
-from tools import *
+from src.utils.tools import *
 
 
 class MetricsCollector:
@@ -209,10 +209,30 @@ def validate_ingest(spark: SparkSession, df: DataFrame) -> tuple:
     
 
     valid_records = df
-    invalid_records = df.filter(col("id").isNull() | col("name_client").isNull() | col("content").isNull())
+    invalid_records = df.select("id","name_client","app","im_version","im_rating","title","content","updated","historical_data").filter(col("id").isNull() | col("name_client").isNull() | col("content").isNull())
+
+    # Se houver duplicatas, adicionamos ao DataFrame de inválidos
+    # Seleciona apenas a coluna "id" do duplicates
+    duplicate_ids = duplicates.select("id")
+
+    # Filtra os registros completos de df com base nos IDs duplicados
+    duplicates_records = df.join(duplicate_ids, on="id", how="inner").select(
+        df["id"],
+        df["name_client"],
+        df["app"],
+        df["im_version"],
+        df["im_rating"],
+        df["title"],
+        df["content"],
+        df["updated"]
+    )
 
     if duplicate_count > 0:
-        invalid_records = invalid_records.union(duplicates)
+        invalid_records = invalid_records.union(duplicates_records)
+
+
+    invalid_records.printSchema()
+    valid_records.printSchema()
 
     valid_records = valid_records.subtract(invalid_records)
 

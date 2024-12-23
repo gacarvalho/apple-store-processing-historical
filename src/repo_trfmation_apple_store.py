@@ -2,8 +2,8 @@ import logging
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import input_file_name, regexp_extract
 from datetime import datetime
-from metrics import MetricsCollector, validate_ingest
-from tools import *
+from src.metrics.metrics import MetricsCollector, validate_ingest
+from src.utils.tools import *
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
