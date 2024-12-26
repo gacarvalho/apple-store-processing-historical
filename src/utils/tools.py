@@ -11,7 +11,10 @@ from pyspark.sql.types import StructType, StructField, StringType, ArrayType, In
 from datetime import datetime
 from pathlib import Path
 from unidecode import unidecode
-from src.schema.schema_apple import apple_store_schema_silver
+try:
+    from schema_apple import apple_store_schema_silver
+except ModuleNotFoundError:
+    from src.schema.schema_apple import apple_store_schema_silver
 
 # Função para remover acentos
 def remove_accents(s):

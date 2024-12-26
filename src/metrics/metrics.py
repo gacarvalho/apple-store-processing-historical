@@ -5,7 +5,10 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import  col, count, when
 from pyspark.sql import functions as F
 from sparkmeasure import StageMetrics
-from src.utils.tools import *
+try:
+    from tools import *
+except ModuleNotFoundError:
+    from src.utils.tools import *
 
 
 class MetricsCollector:
