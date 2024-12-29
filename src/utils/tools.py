@@ -308,8 +308,7 @@ def processing_old_new(spark: SparkSession, df: DataFrame):
         F.coalesce(F.first("new.title"), F.first("old.title")).alias("title"),
         F.coalesce(F.first("new.content"), F.first("old.content")).alias("content"),
         F.first("new.updated").alias("updated"),
-        # Coleta uma lista de todos os dados históricos
-        F.collect_list("historical_data_temp").alias("historical_data")  
+        F.flatten(F.collect_list("historical_data_temp")).alias("historical_data")
     )
 
     df_final.show()
