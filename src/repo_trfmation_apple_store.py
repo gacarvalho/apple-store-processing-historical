@@ -65,7 +65,7 @@ def main():
             "camada": "silver",
             "grupo": "compass",
             "job": "apple_store_reviews",
-            "relevancia": "alta",
+            "relevancia": "0",
             "torre": "SBBR_COMPASS",
             "erro": str(e)
         }
