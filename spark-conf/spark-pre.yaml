@@ -1,0 +1,12 @@
+spark:
+  executor_memory: "3g"               # Memória alocada para cada executor, aumentada para lidar melhor com o volume de dados
+  driver_memory: "4g"                 # Memória alocada para o driver, simplificada para evitar conflitos
+  spark_driver_memory: "4g"           # Memória para execução do driver
+  spark_executor_cores: "2"           # Núcleos alocados para cada executor
+  spark_executor_instances: "5"       # Total de executores (5 executores x 2 núcleos = 10 vCores)
+  spark_default_parallelism: "16"     # Número padrão de tarefas paralelas, ajustado para melhor utilização dos recursos
+  spark_sql_shuffle_partitions: "32"  # Partições padrão para operações de shuffle, aumentadas para distribuir melhor a carga
+  spark_broadcast_timeout: "300"      # Tempo limite para broadcast (em segundos)
+  spark_rdd_compress: "true"          # Habilita compressão de RDDs
+  spark_shuffle_compress: "true"      # Habilita compressão de shuffle
+  spark_io_compression_codec: "lz4"   # Codec para compressão de dados

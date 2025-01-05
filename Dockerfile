@@ -16,9 +16,11 @@ ENV PYTHONPATH="/app:$PYTHONPATH"
 RUN mkdir /app/
 
 COPY conf/spark-default.conf /usr/local/spark/conf/
-COPY src/* /app/
+COPY spark-conf/* /app/
+COPY /src/* /app/
 COPY spark-submit.sh /app/spark-submit.sh
 COPY requirements.txt /app/requirements.txt
+
 
 # Instalar o zip e as dependências do requirements.txt
 RUN apt-get update && apt-get install -y zip \
@@ -33,7 +35,10 @@ RUN pip install --target /app/dependencies -r /app/requirements.txt \
 RUN wget https://repo1.maven.org/maven2/com/sun/jersey/jersey-client/1.19.4/jersey-client-1.19.4.jar -P /usr/local/spark/jars/ && \
     wget https://repo1.maven.org/maven2/com/sun/jersey/jersey-core/1.19.4/jersey-core-1.19.4.jar -P /usr/local/spark/jars/
 
-
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl -L https://github.com/mikefarah/yq/releases/download/v4.15.1/yq_linux_amd64 -o /usr/bin/yq \
+    && chmod +x /usr/bin/yq
 
 # Garantir que o script tenha permissões executáveis
 RUN chmod +x /app/spark-submit.sh
