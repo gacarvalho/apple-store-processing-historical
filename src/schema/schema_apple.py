@@ -10,11 +10,13 @@ def apple_store_schema_silver():
         StructField("title", StringType(), True),
         StructField("content", StringType(), True),
         StructField("updated", StringType(), True),
+        StructField("segmento", StringType(), True),
         StructField("historical_data", ArrayType(
             ArrayType(StructType([
                 StructField("title", StringType(), True),
                 StructField("content", StringType(), True),
                 StructField("app", StringType(), True),
+                StructField("segmento", StringType(), True),
                 StructField("im_version", StringType(), True),
                 StructField("im_rating", StringType(), True)
             ]), True), True))

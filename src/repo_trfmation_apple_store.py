@@ -1,4 +1,5 @@
 import logging
+import sys
 import json
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import input_file_name, regexp_extract
@@ -15,11 +16,22 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def main():
 
+    # Capturar argumentos da linha de comando
+    args = sys.argv
+
+    # Verificar se o número correto de argumentos foi passado
+    if len(args) != 2:
+        print("[*] Usage: spark-submit app.py <env> ")
+        sys.exit(1)
 
     # Criação da sessão Spark
     spark = spark_session()
 
     try:
+
+        # Entrada e captura de variaveis e parametros
+        env = args[1]
+
         # Coleta de métricas
         metrics_collector = MetricsCollector(spark)
         metrics_collector.start_collection()
@@ -27,35 +39,60 @@ def main():
         # Definindo caminhos
         datePath = datetime.now().strftime("%Y%m%d")
         format = "parquet"
-        pathSource = f"/santander/bronze/compass/reviews/appleStore/*/odate={datePath}/*.{format}"
+        pathSource_pf = f"/santander/bronze/compass/reviews/appleStore/*_pf/odate={datePath}/*.{format}"
+        pathSource_pj = f"/santander/bronze/compass/reviews/appleStore/*_pj/odate={datePath}/*.{format}"
         path_target = f"/santander/silver/compass/reviews/appleStore/odate={datePath}/"
         path_target_fail = f"/santander/silver/compass/reviews_fail/appleStore/odate={datePath}/"
 
         # Leitura do arquivo Parquet
-        df = spark.read.parquet(pathSource).withColumn("app", regexp_extract(input_file_name(), "/appleStore/(.*?)/odate=", 1))
+        logging.info(f"[*] Iniciando leitura dos path origens.", exc_info=True)
+        df_pf = read_source_parquet(spark, pathSource_pf)
+        df_pj = read_source_parquet(spark, pathSource_pj)
+
+        # Mantém apenas os DataFrames que possuem dados
+        dfs = [df for df in [df_pf, df_pj] if df is not None]
+
+        # Se houver pelo menos um DataFrame com dados, une os resultados
+        if dfs:
+            df = dfs[0] if len(dfs) == 1 else dfs[0].unionByName(dfs[1])
+        else:
+            print("[*] Nenhum dado encontrado! Criando DataFrame vazio...")
+            empty_schema = spark.read.parquet(pathSource_pf).schema
+            df = spark.createDataFrame([], schema=empty_schema)
 
         # Processamento dos dados
+        logging.info(f"[*] Iniciando o processamento da funcao processing_reviews", exc_info=True)
         df_processado = processing_reviews(df)
 
-        # Valida o DataFrame e coleta resultados
-        valid_df, invalid_df, validation_results = validate_ingest(spark, df_processado)
+        if env == "pre":
+            df_processado.show()
 
-        valid_df.show(50, truncate=False)
-        invalid_df.show(50, truncate=False)
+
+        # Valida o DataFrame e coleta resultados
+        logging.info(f"[*] Iniciando o processamento da funcao validate_ingest", exc_info=True)
+        valid_df, invalid_df, validation_results = validate_ingest(spark, df_processado)
+        if env == "pre":
+            valid_df.show()
+            invalid_df.show()
 
         # Salvar dados válidos
+        logging.info(f"[*] Iniciando a gravacao do dataframe do {valid_df} no path {path_target}", exc_info=True)
         save_dataframe(valid_df, path_target, "valido")
 
         # Salvar dados inválidos
+        logging.info(f"[*] Iniciando a gravacao do dataframe do {invalid_df} no path {path_target_fail}", exc_info=True)
         save_dataframe(invalid_df, path_target_fail, "invalido")
 
+        logging.info(f"[*] Finalizacao da coleta de metricas", exc_info=True)
         metrics_collector.end_collection()
 
         # Coleta métricas após o processamento
+        logging.info(f"[*] Estruturando retorno das metricas em json", exc_info=True)
         metrics_json = metrics_collector.collect_metrics(valid_df, invalid_df, validation_results, "silver_apple_store")
 
+        logging.info(f"[*] Salvando metricas", exc_info=True)
         # Salvar métricas no MongoDB
-        save_metrics(spark, metrics_json)
+        save_metrics(metrics_json)
 
         logging.info(f"[*] Métricas da aplicação: {metrics_json}")
 
@@ -64,13 +101,14 @@ def main():
 
         # JSON de erro
         error_metrics = {
-            "data_e_hora": datetime.now().isoformat(),
-            "camada": "silver",
-            "grupo": "compass",
+            "timestamp": datetime.now().isoformat(),
+            "layer": "silver",
+            "project": "compass",
             "job": "apple_store_reviews",
-            "relevancia": "0",
-            "torre": "SBBR_COMPASS",
-            "erro": str(e)
+            "priority": "0",
+            "tower": "SBBR_COMPASS",
+            "client": "[NA]",
+            "error": str(e)
         }
 
         metrics_json = json.dumps(error_metrics)

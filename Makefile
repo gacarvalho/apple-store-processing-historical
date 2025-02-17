@@ -1,6 +1,6 @@
 DOCKER_NETWORK = hadoop-network
 ENV_FILE = hadoop.env
-VERSION_REPOSITORY_DOCKER = 1.0.0
+VERSION_REPOSITORY_DOCKER = 1.0.1
 
 current_branch := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "default-branch")
 

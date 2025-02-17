@@ -10,7 +10,7 @@ on:
 
 env:
   DOCKER_IMAGE: "iamgacarvalho/dmc-app-silver-reviews-apple-store"
-  DOCKER_TAG: "1.0.0"
+  DOCKER_TAG: "1.0.1"
 
 jobs:
   # Job para rodar os testes unitários

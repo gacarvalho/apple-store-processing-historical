@@ -6,3 +6,4 @@ pytest==7.4.0
 pytest-mock==3.11.1
 pyspark==3.3.0
 Unidecode==0.04.12
+elasticsearch==8.14.0
