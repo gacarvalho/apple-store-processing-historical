@@ -390,7 +390,7 @@ def processing_old_new(spark: SparkSession, df: DataFrame):
             ).otherwise(
                 None  # Quando não houver diferenças
             )
-        )
+        ).distinct()
 
     # Agrupando e coletando históricos
     df_final = result_df.groupBy("id").agg(
