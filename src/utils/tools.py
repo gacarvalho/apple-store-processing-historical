@@ -392,10 +392,15 @@ def processing_old_new(spark: SparkSession, df: DataFrame):
             )
         ).distinct()
 
+    # Lista de colunas disponíveis
+    columns = result_df.columns
+
     # Agrupando e coletando históricos
     df_final = result_df.groupBy("id").agg(
-        # Coleta o primeiro valor não nulo das colunas relevantes dos DataFrames novo e antigo
-        F.coalesce(F.first("new.name_client"), F.first("old.name_client")).alias("name_client"),
+        F.coalesce(
+            F.first("new.name_client") if "new.name_client" in columns else F.lit(None),
+            F.first("old.name_client")
+        ).alias("name_client"),
         F.coalesce(F.first("new.app"), F.first("old.app")).alias("app"),
         F.coalesce(F.first("new.im_version"), F.first("old.im_version")).alias("im_version"),
         F.coalesce(F.first("new.im_rating"), F.first("old.im_rating")).alias("im_rating"),
@@ -405,6 +410,7 @@ def processing_old_new(spark: SparkSession, df: DataFrame):
         F.first("new.segmento").alias("segmento"),
         F.flatten(F.collect_list("historical_data_temp")).alias("historical_data")
     )
+
 
     logging.info(f"[*] Visao final do processing_reviews", exc_info=True)
     df_final.show()
