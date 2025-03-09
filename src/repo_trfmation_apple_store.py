@@ -71,6 +71,7 @@ def main():
         # Valida o DataFrame e coleta resultados
         logging.info(f"[*] Iniciando o processamento da funcao validate_ingest", exc_info=True)
         valid_df, invalid_df, validation_results = validate_ingest(spark, df_processado)
+
         if env == "pre":
             valid_df.show()
             invalid_df.show()
@@ -92,29 +93,13 @@ def main():
 
         logging.info(f"[*] Salvando metricas", exc_info=True)
         # Salvar métricas no MongoDB
-        save_metrics(metrics_json)
+        save_metrics(metrics_json,valid_df)
 
         logging.info(f"[*] Métricas da aplicação: {metrics_json}")
 
     except Exception as e:
         logging.error(f"[*] An error occurred: {e}", exc_info=True)
-
-        # JSON de erro
-        error_metrics = {
-            "timestamp": datetime.now().isoformat(),
-            "layer": "silver",
-            "project": "compass",
-            "job": "apple_store_reviews",
-            "priority": "0",
-            "tower": "SBBR_COMPASS",
-            "client": "[NA]",
-            "error": str(e)
-        }
-
-        metrics_json = json.dumps(error_metrics)
-
-        # Salvar métricas de erro no MongoDB
-        save_metrics_job_fail(metrics_json)
+        log_error(e, df)
 
     finally:
         spark.stop()

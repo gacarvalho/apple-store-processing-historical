@@ -24,6 +24,26 @@ def remove_accents(s):
 
 remove_accents_udf = F.udf(remove_accents, StringType())
 
+def log_error(e, df):
+    """Gera e salva métricas de erro no Elastic."""
+
+    # Convertendo "segmento" para uma lista de strings
+    segmentos_unicos = [row["segmento"] for row in df.select("segmento").distinct().collect()]
+
+    error_metrics = {
+            "timestamp": datetime.now().isoformat(),
+            "layer": "silver",
+            "project": "compass",
+            "job": "apple_store_reviews",
+            "priority": "0",
+            "tower": "SBBR_COMPASS",
+            "client": segmentos_unicos,
+            "error": str(e)
+        }
+
+    # Serializa para JSON e salva no MongoDB
+    save_metrics_job_fail(json.dumps(error_metrics))
+
 def read_source_parquet(spark, path):
     """Tenta ler um Parquet e retorna None se não houver dados"""
     try:
@@ -95,28 +115,9 @@ def save_dataframe(df, path, label):
             logging.warning(f"[*] Nenhum dado {label} foi encontrado!")
     except Exception as e:
         logging.error(f"[*] Erro ao salvar dados {label}: {e}", exc_info=True)
+        log_error(e, df)
 
-        # Convertendo "segmento" para uma lista de strings
-        segmentos_unicos = [row["segmento"] for row in df.select("segmento").distinct().collect()]
-
-        # JSON de erro
-        error_metrics = {
-            "timestamp": datetime.now().isoformat(),
-            "layer": "silver",
-            "project": "compass",
-            "job": "apple_store_reviews",
-            "priority": "0",
-            "tower": "SBBR_COMPASS",
-            "client": segmentos_unicos,
-            "error": str(e)
-        }
-
-        metrics_json = json.dumps(error_metrics)
-
-        # Salvar métricas de erro no MongoDB
-        save_metrics_job_fail(metrics_json)
-
-def save_metrics(metrics_json):
+def save_metrics(metrics_json, df):
     """
     Salva as métricas.
     """
@@ -142,23 +143,7 @@ def save_metrics(metrics_json):
         logging.info(f"[*] Métricas da aplicação salvas no Elasticsearch: {response}")
     except json.JSONDecodeError as e:
         logging.error(f"[*] Erro ao processar métricas: {e}", exc_info=True)
-
-        # JSON de erro
-        error_metrics = {
-            "timestamp": datetime.now().isoformat(),
-            "layer": "silver",
-            "project": "compass",
-            "job": "apple_store_reviews",
-            "priority": "3",
-            "tower": "SBBR_COMPASS",
-            "client": "[NA]",
-            "error": str(e)
-        }
-
-        metrics_json = json.dumps(error_metrics)
-
-        # Salvar métricas de erro no MongoDB
-        save_metrics_job_fail(metrics_json)
+        log_error(e, df)
 
     except Exception as e:
         logging.error(f"[*] Erro ao salvar métricas no Elasticsearch: {e}", exc_info=True)
@@ -392,15 +377,10 @@ def processing_old_new(spark: SparkSession, df: DataFrame):
             )
         ).distinct()
 
-    # Lista de colunas disponíveis
-    columns = result_df.columns
-
     # Agrupando e coletando históricos
     df_final = result_df.groupBy("id").agg(
-        F.coalesce(
-            F.first("new.name_client") if "new.name_client" in columns else F.lit(None),
-            F.first("old.name_client")
-        ).alias("name_client"),
+        # Coleta o primeiro valor não nulo das colunas relevantes dos DataFrames novo e antigo
+        F.coalesce(F.first("new.name_client"), F.first("old.name_client")).alias("name_client"),
         F.coalesce(F.first("new.app"), F.first("old.app")).alias("app"),
         F.coalesce(F.first("new.im_version"), F.first("old.im_version")).alias("im_version"),
         F.coalesce(F.first("new.im_rating"), F.first("old.im_rating")).alias("im_rating"),
