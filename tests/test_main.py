@@ -1,7 +1,7 @@
 # tests/test_main.py
 import pytest
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from datetime import datetime
 from pyspark.sql.functions import input_file_name, regexp_extract, lit
 from unittest.mock import MagicMock, patch
@@ -21,20 +21,36 @@ def apple_store_schema_bronze():
         StructField('content_attributes_label', StringType(), True),
         StructField('content_attributes_term', StringType(), True),
         StructField('id', StringType(), True),
-        StructField('im_rating', StringType(), True),
+        StructField('im_rating', IntegerType(), True),
         StructField('im_version', StringType(), True),
-        StructField('im_votecount', StringType(), True),
-        StructField('im_votesum', StringType(), True),
+        StructField('im_votecount', IntegerType(), True),
+        StructField('im_votesum', IntegerType(), True),
         StructField('link_attributes_href', StringType(), True),
         StructField('link_attributes_related', StringType(), True),
         StructField('title', StringType(), True),
-        StructField('updated', StringType(), True)
+        StructField('updated', StringType(), True),
+        StructField('segmento', StringType(), True)  # Adicionado como 15º campo
     ])
 
 def data_apple():
     return [
-        ("keneddy santos", "https://itunes.apple.com/br/reviews/id1291186914", "Está na hora de atualizar...", "Aplicativo", "Application", "11670010101", "4", "24.7.7", "0", "0", "https://itunes.apple.com/...","related", "Face ID", "2024-08-30T08:10:10-07:00"),
-        # ... (outros dados iguais aos anteriores)
+        (
+            "keneddy santos",  # author_name
+            "https://itunes.apple.com/br/reviews/id1291186914",  # author_uri
+            "Está na hora de atualizar...",  # content
+            "Aplicativo",  # content_attributes_label
+            "Application",  # content_attributes_term
+            "11670010101",  # id
+            4,  # im_rating
+            "24.7.7",  # im_version
+            0,  # im_votecount
+            0,  # im_votesum
+            "https://itunes.apple.com/...",  # link_attributes_href
+            "related",  # link_attributes_related
+            "Face ID",  # title
+            "2024-08-30T08:10:10-07:00",  # updated
+            "pf"  # segmento
+        )
     ]
 
 def test_read_data(spark):
@@ -44,7 +60,7 @@ def test_read_data(spark):
     df_test.write.mode("overwrite").parquet(test_parquet_path)
     df = spark.read.parquet(test_parquet_path).withColumn("app", regexp_extract(input_file_name(), "/appleStore/(.*?)/odate=", 1))
     df_processado = processing_reviews(df)
-    assert df_processado.count() == 7
+    assert df_processado.count() == 1
 
 def test_processamento_reviews(spark):
     df_test = spark.createDataFrame(data_apple(), apple_store_schema_bronze())
