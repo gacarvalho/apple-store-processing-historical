@@ -29,7 +29,7 @@ def apple_store_schema_bronze():
         StructField('link_attributes_related', StringType(), True),
         StructField('title', StringType(), True),
         StructField('updated', StringType(), True),
-        StructField('segmento', StringType(), True)  # Adicionado como 15º campo
+        StructField('segmento', StringType(), True)
     ])
 
 def data_apple():
