@@ -6,12 +6,12 @@ from pyspark.sql import SparkSession, DataFrame
 
 """    Necessidade para rodar os testes unitarios como processo de integracao!  """
 try:
-    from tools import read_source_parquet, save_dataframe, processing_reviews
-    from metrics import MetricsCollector, validate_ingest, save_metrics
+    from tools import read_source_parquet, save_dataframe, processing_reviews, save_metrics
+    from metrics import MetricsCollector, validate_ingest
     from schema_apple import apple_store_schema_silver
 except ModuleNotFoundError:
-    from src.utils.tools import read_source_parquet, save_dataframe, processing_reviews
-    from src.utils.metrics import MetricsCollector, validate_ingest, save_metrics
+    from src.utils.tools import read_source_parquet, save_dataframe, processing_reviews, save_metrics
+    from src.utils.metrics import MetricsCollector, validate_ingest
     from src.schema.schema_apple import apple_store_schema_silver
 
 # Configuração centralizada
