@@ -1,20 +1,20 @@
 import logging
 import sys
 from datetime import datetime
-from pyspark.sql import SparkSession
-from metrics import MetricsCollector, validate_ingest
+from typing import Tuple
+from pyspark.sql import SparkSession, DataFrame
+
+"""    Necessidade para rodar os testes unitarios como processo de integracao!  """
 try:
-    from tools import read_source_parquet, save_dataframe, processing_reviews, save_metrics
+    from tools import read_source_parquet, save_dataframe, processing_reviews
+    from metrics import MetricsCollector, validate_ingest, save_metrics
     from schema_apple import apple_store_schema_silver
 except ModuleNotFoundError:
-    from src.utils.tools import read_source_parquet, save_dataframe, processing_reviews, save_metrics
+    from src.utils.tools import read_source_parquet, save_dataframe, processing_reviews
+    from src.utils.metrics import MetricsCollector, validate_ingest, save_metrics
     from src.schema.schema_apple import apple_store_schema_silver
 
-
-# --- Configuração de Logging ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# --- Constantes da Aplicação ---
+# Configuração centralizada
 FORMAT = "parquet"
 PATH_BRONZE_BASE = "/santander/bronze/compass/reviews/appleStore/"
 PATH_SILVER_BASE = "/santander/silver/compass/reviews/appleStore/"
@@ -22,103 +22,120 @@ PATH_SILVER_FAIL_BASE = "/santander/silver/compass/reviews_fail/appleStore/"
 ENV_PRE_VALUE = "pre"
 ELASTIC_INDEX_SUCCESS = "compass_dt_datametrics"
 ELASTIC_INDEX_FAIL = "compass_dt_datametrics_fail"
+COMPRESSION_TYPE = "snappy"
+PARTITION_COLUMN = "odate"
 
-def spark_session():
-    """
-    Cria e retorna uma SparkSession configurada para a aplicação.
-    """
+# Configuração de logging estruturado
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class PipelineConfig:
+    """Configuracao do pipeline"""
+    def __init__(self, env: str):
+        self.env = env
+        self.date_str = datetime.now().strftime("%Y%m%d")
+        self.path_source_pf = f"{PATH_BRONZE_BASE}*_pf/odate={self.date_str}/"
+        self.path_source_pj = f"{PATH_BRONZE_BASE}*_pj/odate={self.date_str}/"
+        self.path_target = PATH_SILVER_BASE
+        self.path_target_fail = PATH_SILVER_FAIL_BASE
+
+def create_spark_session() -> SparkSession:
+    """Criacao da sessao do Spark"""
     try:
         spark = SparkSession.builder \
             .appName("App Reviews Silver [apple store]") \
             .config("spark.jars.packages", "org.apache.spark:spark-measure_2.12:0.16") \
             .getOrCreate()
+        logger.info("[*] Spark Session criado com sucesso.")
         return spark
     except Exception as e:
-        logging.error(f"[*] Falha ao criar SparkSession: {e}", exc_info=True)
+        logger.error(f"[*] Falha ao criar o Spark Session: {e}", exc_info=True)
         raise
 
-def main():
-    """
-    Processa dados da camada bronze para a silver, validando e salvando os dados e métricas.
-    """
-    args_list = sys.argv
-
-    # Verificar se o número correto de argumentos foi passado
-    if len(args_list) != 2:
-        logging.error("[*] Uso: spark-submit app.py <env>")
-        sys.exit(1)
-
-    env = args_list[1]
-    spark = spark_session()
+def read_and_union_data(spark: SparkSession, config: PipelineConfig) -> DataFrame:
+    """Ler e unir todos os dados de origem"""
+    logger.info("[*] Lendo dados de origem dos caminhos PF e PJ.")
 
     try:
-        # Inicialização da coleta de métricas
-        metrics_collector = MetricsCollector(spark)
-        metrics_collector.start_collection()
-
-        # Data atual e caminhos
-        date_str = datetime.now().strftime("%Y%m%d")
-        path_source_pf = f"{PATH_BRONZE_BASE}*_pf/odate={date_str}/"
-        path_source_pj = f"{PATH_BRONZE_BASE}*_pj/odate={date_str}/"
-        path_target = PATH_SILVER_BASE
-        path_target_fail = PATH_SILVER_FAIL_BASE
-
-        # Leitura das fontes
-        logging.info("[*] Iniciando leitura dos paths de origem.")
-        df_pf = read_source_parquet(spark, path_source_pf)
-        df_pj = read_source_parquet(spark, path_source_pj)
+        df_pf = read_source_parquet(spark, config.path_source_pf)
+        df_pj = read_source_parquet(spark, config.path_source_pj)
 
         dfs = [df for df in [df_pf, df_pj] if df is not None]
 
-        if dfs:
-            df = dfs[0] if len(dfs) == 1 else dfs[0].unionByName(dfs[1])
-        else:
-            logging.warning("[*] Nenhum dado encontrado. Criando DataFrame vazio.")
-            empty_schema = spark.read.parquet(path_source_pf).schema
-            df = spark.createDataFrame([], schema=empty_schema)
+        if not dfs:
+            logger.warning("[*] Nenhum dado encontrado - criando DataFrame vazio.")
+            empty_schema = spark.read.parquet(config.path_source_pf).schema
+            return spark.createDataFrame([], schema=empty_schema)
 
-        # Processamento
-        logging.info("[*] Iniciando o processamento das avaliações.")
-        df_processado = processing_reviews(df)
+        return dfs[0] if len(dfs) == 1 else dfs[0].unionByName(dfs[1])
+    except Exception as e:
+        logger.error("[*] Falha ao ler e unir dados.", exc_info=True)
+        raise
 
-        if env == ENV_PRE_VALUE:
-            df_processado.show()
+def process_and_validate_data(spark: SparkSession, df: DataFrame, config: PipelineConfig) -> Tuple[DataFrame, DataFrame, dict]:
+    """[*] Processar e validar dados com coleta de métricas"""
+    metrics_collector = MetricsCollector(spark)
+    metrics_collector.start_collection()
 
-        # Validação
-        logging.info("[*] Validando os dados processados.")
-        valid_df, invalid_df, validation_results = validate_ingest(spark, df_processado)
+    try:
+        logger.info("[*] Processando dados de avaliações")
+        df_processed = processing_reviews(df)
 
-        if env == ENV_PRE_VALUE:
+        logger.info("[*] Validando a qualidade dos dados")
+        valid_df, invalid_df, validation_results = validate_ingest(spark, df_processed)
+
+        if config.env == ENV_PRE_VALUE:
+            logger.info("[*] Dados de amostra: valid_df")
             valid_df.take(10)
+            logger.info("[*] Dados de amostra: invalid_df")
             invalid_df.take(10)
 
-        # Salvando dados válidos
-        logging.info(f"[*] Salvando dados válidos em {path_target}")
-        save_dataframe(
-            df=valid_df,
-            path=path_target,
-            label="valido",
-            schema=apple_store_schema_silver(),
-            partition_column="odate", # data de carga referencia
-            compression="snappy"
-        )
-
-        # Salvando dados inválidos
-        logging.info(f"[*] Salvando dados inválidos em {path_target_fail}")
-        # Salvar dados inválidos
-        save_dataframe(
-            df=invalid_df,
-            path=path_target_fail,
-            label="invalido",
-            partition_column="odate", # data de carga referencia
-            compression="snappy"
-        )
-
-        # Finaliza coleta de métricas
+        return valid_df, invalid_df, validation_results
+    finally:
         metrics_collector.end_collection()
 
-        # Estrutura e salva métricas
-        metrics_json = metrics_collector.collect_metrics(valid_df, invalid_df, validation_results, "silver_apple_store")
+def save_output_data(valid_df: DataFrame, invalid_df: DataFrame, config: PipelineConfig) -> None:
+    """Salvar dados de saida com tratamento de erros adequado"""
+    try:
+        logger.info(f"[*] Salvando dados validos em {config.path_target}")
+        save_dataframe(
+            df=valid_df,
+            path=config.path_target,
+            label="valido",
+            schema=apple_store_schema_silver(),
+            partition_column=PARTITION_COLUMN,
+            compression=COMPRESSION_TYPE
+        )
+
+        logger.info(f"[*] Salvando dados invalidos em {config.path_target_fail}")
+        save_dataframe(
+            df=invalid_df,
+            path=config.path_target_fail,
+            label="invalido",
+            partition_column=PARTITION_COLUMN,
+            compression=COMPRESSION_TYPE
+        )
+    except Exception as e:
+        logger.error("[*] Falha ao salvar os dados de saida", exc_info=True)
+        raise
+
+def execute_pipeline(spark: SparkSession, config: PipelineConfig) -> None:
+    """Executa o pipeline completo"""
+    try:
+        # Pipeline steps
+        source_df = read_and_union_data(spark, config)
+        valid_df, invalid_df, validation_results = process_and_validate_data(spark, source_df, config)
+        save_output_data(valid_df, invalid_df, config)
+
+        # Metrics collection and saving
+        metrics_collector = MetricsCollector(spark)
+        metrics_json = metrics_collector.collect_metrics(
+            valid_df, invalid_df, validation_results, "silver_apple_store"
+        )
+
         save_metrics(
             metrics_type='success',
             index=ELASTIC_INDEX_SUCCESS,
@@ -126,18 +143,36 @@ def main():
             metrics_data=metrics_json
         )
 
-        logging.info(f"[*] Métricas da aplicação: {metrics_json}")
-
+        logger.info(f"[*] Pipeline metrics: {metrics_json}")
+        logger.info("[*] Pipeline executado com sucesso.")
     except Exception as e:
-        logging.error(f"[*] Ocorreu um erro: {e}", exc_info=True)
+        logger.error("[*] Pipeline executado com falha!", exc_info=True)
         save_metrics(
             metrics_type="fail",
             index=ELASTIC_INDEX_FAIL,
             error=e
         )
+        raise
 
+def main():
+
+    if len(sys.argv) != 2:
+        logger.error("Usage: spark-submit app.py <env>")
+        sys.exit(1)
+
+    env = sys.argv[1]
+    config = PipelineConfig(env)
+    spark = None
+
+    try:
+        spark = create_spark_session()
+        execute_pipeline(spark, config)
+    except Exception as e:
+        logger.error(f"Erro no pipeline: {e}", exc_info=True)
+        sys.exit(1)
     finally:
-        spark.stop()
+        if spark:
+            spark.stop()
 
 if __name__ == "__main__":
     main()

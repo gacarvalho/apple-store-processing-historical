@@ -1,3 +1,5 @@
+import importlib
+import logging
 import json
 import re
 from datetime import datetime
@@ -7,10 +9,9 @@ from pyspark.sql.types import ArrayType, StructType, StringType, StructField
 from pyspark.sql import functions as F
 from sparkmeasure import StageMetrics
 try:
-    from tools import *
-except ModuleNotFoundError:
-    from src.utils.tools import *
-import logging
+    from tools import processing_old_new
+except ImportError:
+    from src.utils.tools import processing_old_new
 
 
 # Configuração de logging
