@@ -69,29 +69,14 @@ run_spark_submit() {
     --conf spark.metrics.conf=/usr/local/spark/conf/metrics.properties \
     --conf spark.ui.prometheus.enabled=true \
     --conf spark.executor.processTreeMetrics.enabled=true \
-    --packages org.mongodb.spark:mongo-spark-connector_2.11:2.4.1,ch.cern.sparkmeasure:spark-measure_2.12:0.16 \
+    --packages ch.cern.sparkmeasure:spark-measure_2.12:0.16 \
     --py-files /app/dependencies.zip,/app/metrics.py,/app/tools.py,/app/schema_apple.py \
-    --conf spark.executorEnv.MONGO_USER=$MONGO_USER \
-    --conf spark.executorEnv.MONGO_PASS=$MONGO_PASS\
     --conf spark.executorEnv.ES_USER=$ES_USER \
     --conf spark.executorEnv.ES_PASS=$ES_PASS\
-    --conf spark.executorEnv.MONGO_HOST=mongodb \
-    --conf spark.executorEnv.MONGO_PORT=27017 \
-    --conf spark.executorEnv.MONGO_DB=compass \
-    --conf spark.driverEnv.MONGO_USER=$MONGO_USER \
-    --conf spark.driverEnv.MONGO_PASS=$MONGO_PASS\
     --conf spark.driverEnv.ES_USER=$ES_USER \
     --conf spark.driverEnv.ES_PASS=$ES_PASS \
-    --conf spark.driverEnv.MONGO_HOST=mongodb \
-    --conf spark.driverEnv.MONGO_PORT=27017 \
-    --conf spark.driverEnv.MONGO_DB=compass \
-    --conf spark.yarn.appMasterEnv.MONGO_USER=$MONGO_USER \
-    --conf spark.yarn.appMasterEnv.MONGO_PASS=$MONGO_PASS\
     --conf spark.yarn.appMasterEnv.ES_USER=$ES_USER \
     --conf spark.yarn.appMasterEnv.ES_PASS=$ES_PASS \
-    --conf spark.yarn.appMasterEnv.MONGO_HOST=mongodb \
-    --conf spark.yarn.appMasterEnv.MONGO_PORT=27017 \
-    --conf spark.yarn.appMasterEnv.MONGO_DB=compass \
     --name dmc_silver_reviews_apple_store_$CONFIG_ENV \
     /app/repo_trfmation_apple_store.py $CONFIG_ENV"
 

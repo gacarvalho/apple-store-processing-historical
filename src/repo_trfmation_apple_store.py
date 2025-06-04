@@ -1,120 +1,143 @@
 import logging
 import sys
-import json
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import input_file_name, regexp_extract
 from datetime import datetime
+from pyspark.sql import SparkSession
 from metrics import MetricsCollector, validate_ingest
 try:
-    from tools import *
+    from tools import read_source_parquet, save_dataframe, processing_reviews, save_metrics
+    from schema_apple import apple_store_schema_silver
 except ModuleNotFoundError:
-    from src.utils.tools import *
+    from src.utils.tools import read_source_parquet, save_dataframe, processing_reviews, save_metrics
+    from src.schema.schema_apple import apple_store_schema_silver
 
 
-# Configuração de logging
+# --- Configuração de Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def main():
+# --- Constantes da Aplicação ---
+FORMAT = "parquet"
+PATH_BRONZE_BASE = "/santander/bronze/compass/reviews/appleStore/"
+PATH_SILVER_BASE = "/santander/silver/compass/reviews/appleStore/"
+PATH_SILVER_FAIL_BASE = "/santander/silver/compass/reviews_fail/appleStore/"
+ENV_PRE_VALUE = "pre"
+ELASTIC_INDEX_SUCCESS = "compass_dt_datametrics"
+ELASTIC_INDEX_FAIL = "compass_dt_datametrics_fail"
 
-    # Capturar argumentos da linha de comando
-    args = sys.argv
+def spark_session():
+    """
+    Cria e retorna uma SparkSession configurada para a aplicação.
+    """
+    try:
+        spark = SparkSession.builder \
+            .appName("App Reviews Silver [apple store]") \
+            .config("spark.jars.packages", "org.apache.spark:spark-measure_2.12:0.16") \
+            .getOrCreate()
+        return spark
+    except Exception as e:
+        logging.error(f"[*] Falha ao criar SparkSession: {e}", exc_info=True)
+        raise
+
+def main():
+    """
+    Processa dados da camada bronze para a silver, validando e salvando os dados e métricas.
+    """
+    args_list = sys.argv
 
     # Verificar se o número correto de argumentos foi passado
-    if len(args) != 2:
-        print("[*] Usage: spark-submit app.py <env> ")
+    if len(args_list) != 2:
+        logging.error("[*] Uso: spark-submit app.py <env>")
         sys.exit(1)
 
-    # Criação da sessão Spark
+    env = args_list[1]
     spark = spark_session()
 
     try:
-
-        # Entrada e captura de variaveis e parametros
-        env = args[1]
-
-        # Coleta de métricas
+        # Inicialização da coleta de métricas
         metrics_collector = MetricsCollector(spark)
         metrics_collector.start_collection()
 
-        # Definindo caminhos
-        datePath = datetime.now().strftime("%Y%m%d")
-        format = "parquet"
-        pathSource_pf = f"/santander/bronze/compass/reviews/appleStore/*_pf/odate={datePath}/*.{format}"
-        pathSource_pj = f"/santander/bronze/compass/reviews/appleStore/*_pj/odate={datePath}/*.{format}"
-        path_target = f"/santander/silver/compass/reviews/appleStore/odate={datePath}/"
-        path_target_fail = f"/santander/silver/compass/reviews_fail/appleStore/odate={datePath}/"
+        # Data atual e caminhos
+        date_str = datetime.now().strftime("%Y%m%d")
+        path_source_pf = f"{PATH_BRONZE_BASE}*_pf/odate={date_str}/"
+        path_source_pj = f"{PATH_BRONZE_BASE}*_pj/odate={date_str}/"
+        path_target = PATH_SILVER_BASE
+        path_target_fail = PATH_SILVER_FAIL_BASE
 
-        # Leitura do arquivo Parquet
-        logging.info(f"[*] Iniciando leitura dos path origens.", exc_info=True)
-        df_pf = read_source_parquet(spark, pathSource_pf)
-        df_pj = read_source_parquet(spark, pathSource_pj)
+        # Leitura das fontes
+        logging.info("[*] Iniciando leitura dos paths de origem.")
+        df_pf = read_source_parquet(spark, path_source_pf)
+        df_pj = read_source_parquet(spark, path_source_pj)
 
-        # Mantém apenas os DataFrames que possuem dados
         dfs = [df for df in [df_pf, df_pj] if df is not None]
 
-        # Se houver pelo menos um DataFrame com dados, une os resultados
         if dfs:
             df = dfs[0] if len(dfs) == 1 else dfs[0].unionByName(dfs[1])
         else:
-            print("[*] Nenhum dado encontrado! Criando DataFrame vazio...")
-            empty_schema = spark.read.parquet(pathSource_pf).schema
+            logging.warning("[*] Nenhum dado encontrado. Criando DataFrame vazio.")
+            empty_schema = spark.read.parquet(path_source_pf).schema
             df = spark.createDataFrame([], schema=empty_schema)
 
-        # Processamento dos dados
-        logging.info(f"[*] Iniciando o processamento da funcao processing_reviews", exc_info=True)
+        # Processamento
+        logging.info("[*] Iniciando o processamento das avaliações.")
         df_processado = processing_reviews(df)
 
-        if env == "pre":
+        if env == ENV_PRE_VALUE:
             df_processado.show()
 
-
-        # Valida o DataFrame e coleta resultados
-        logging.info(f"[*] Iniciando o processamento da funcao validate_ingest", exc_info=True)
+        # Validação
+        logging.info("[*] Validando os dados processados.")
         valid_df, invalid_df, validation_results = validate_ingest(spark, df_processado)
 
-        if env == "pre":
-            valid_df.show()
-            invalid_df.show()
+        if env == ENV_PRE_VALUE:
+            valid_df.take(10)
+            invalid_df.take(10)
 
-        # Salvar dados válidos
-        logging.info(f"[*] Iniciando a gravacao do dataframe do {valid_df} no path {path_target}", exc_info=True)
-        save_dataframe(valid_df, path_target, "valido")
+        # Salvando dados válidos
+        logging.info(f"[*] Salvando dados válidos em {path_target}")
+        save_dataframe(
+            df=valid_df,
+            path=path_target,
+            label="valido",
+            schema=apple_store_schema_silver(),
+            partition_column="odate", # data de carga referencia
+            compression="snappy"
+        )
 
+        # Salvando dados inválidos
+        logging.info(f"[*] Salvando dados inválidos em {path_target_fail}")
         # Salvar dados inválidos
-        logging.info(f"[*] Iniciando a gravacao do dataframe do {invalid_df} no path {path_target_fail}", exc_info=True)
-        save_dataframe(invalid_df, path_target_fail, "invalido")
+        save_dataframe(
+            df=invalid_df,
+            path=path_target_fail,
+            label="invalido",
+            partition_column="odate", # data de carga referencia
+            compression="snappy"
+        )
 
-        logging.info(f"[*] Finalizacao da coleta de metricas", exc_info=True)
+        # Finaliza coleta de métricas
         metrics_collector.end_collection()
 
-        # Coleta métricas após o processamento
-        logging.info(f"[*] Estruturando retorno das metricas em json", exc_info=True)
+        # Estrutura e salva métricas
         metrics_json = metrics_collector.collect_metrics(valid_df, invalid_df, validation_results, "silver_apple_store")
-
-        logging.info(f"[*] Salvando metricas", exc_info=True)
-        # Salvar métricas no MongoDB
-        save_metrics(metrics_json,valid_df)
+        save_metrics(
+            metrics_type='success',
+            index=ELASTIC_INDEX_SUCCESS,
+            df=valid_df,
+            metrics_data=metrics_json
+        )
 
         logging.info(f"[*] Métricas da aplicação: {metrics_json}")
 
     except Exception as e:
-        logging.error(f"[*] An error occurred: {e}", exc_info=True)
-        log_error(e, df)
+        logging.error(f"[*] Ocorreu um erro: {e}", exc_info=True)
+        save_metrics(
+            metrics_type="fail",
+            index=ELASTIC_INDEX_FAIL,
+            error=e
+        )
 
     finally:
         spark.stop()
-
-def spark_session():
-    try:
-        spark = SparkSession.builder \
-            .appName("App Reviews [apple store]") \
-            .config("spark.jars.packages", "org.apache.spark:spark-measure_2.12:0.16") \
-            .getOrCreate()
-        return spark
-
-    except Exception as e:
-        logging.error(f"[*] Failed to create SparkSession: {e}", exc_info=True)
-        raise
 
 if __name__ == "__main__":
     main()

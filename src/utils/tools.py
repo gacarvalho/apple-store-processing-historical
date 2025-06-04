@@ -1,7 +1,6 @@
 import json
 import os
 import logging
-import pymongo
 import subprocess
 import pyspark.sql.functions as F
 from urllib.parse import quote_plus
@@ -13,10 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from unidecode import unidecode
 from elasticsearch import Elasticsearch
-try:
-    from schema_apple import apple_store_schema_silver
-except ModuleNotFoundError:
-    from src.schema.schema_apple import apple_store_schema_silver
+from typing import Optional, Union
+import traceback
 
 # Função para remover acentos
 def remove_accents(s):
@@ -24,37 +21,17 @@ def remove_accents(s):
 
 remove_accents_udf = F.udf(remove_accents, StringType())
 
-def log_error(e, df):
-    """Gera e salva métricas de erro no Elastic."""
-
-    # Convertendo "segmento" para uma lista de strings
-    segmentos_unicos = [row["segmento"] for row in df.select("segmento").distinct().collect()]
-
-    error_metrics = {
-            "timestamp": datetime.now().isoformat(),
-            "layer": "silver",
-            "project": "compass",
-            "job": "apple_store_reviews",
-            "priority": "0",
-            "tower": "SBBR_COMPASS",
-            "client": segmentos_unicos,
-            "error": str(e)
-        }
-
-    # Serializa para JSON e salva no MongoDB
-    save_metrics_job_fail(json.dumps(error_metrics))
-
 def read_source_parquet(spark, path):
     """Tenta ler um Parquet e retorna None se não houver dados"""
     try:
         df = spark.read.parquet(path)
         if df.isEmpty():
-            print(f"[*] Nenhum dado encontrado em: {path}")
+            logging.error(f"[*] Nenhum dado encontrado em: {path}")
             return None
         return df.withColumn("app", regexp_extract(input_file_name(), "/appleStore/(.*?)/odate=", 1)) \
                  .withColumn("segmento", regexp_extract(input_file_name(), r"/appleStore/[^/_]+_([pfj]+)/odate=", 1))
     except AnalysisException:
-        print(f"[*] Falha ao ler: {path}. O arquivo pode não existir.")
+        logging.error(f"[*] Falha ao ler: {path}. O arquivo pode não existir.")
         return None
 
 # Função de processamento
@@ -93,135 +70,172 @@ def get_schema(df, schema):
             df = df.withColumn(field.name, df[field.name].cast(StringType()))
     return df.select([field.name for field in schema.fields])
 
+def save_dataframe(df: DataFrame,
+                   path: str,
+                   label: str,
+                   schema: Optional[dict] = None,
+                   partition_column: str = "odate",
+                   compression: str = "snappy") -> bool:
+    """
+    Salva um DataFrame Spark no formato Parquet de forma robusta e profissional.
 
-def save_dataframe(df, path, label):
+    Parâmetros:
+        df: DataFrame Spark a ser salvo
+        path: Caminho de destino para salvar os dados
+        label: Identificação do tipo de dados para logs (ex: 'valido', 'invalido')
+        schema: Schema opcional para validação dos dados
+        partition_column: Nome da coluna de partição (default: 'odate')
+        compression: Tipo de compressão (default: 'snappy')
+
+    Retorno:
+        bool: True se salvou com sucesso, False caso contrário
+
+    Exceções:
+        ValueError: Se os parâmetros obrigatórios forem inválidos
+        IOError: Se houver problemas ao escrever no filesystem
     """
-    Salva o DataFrame em formato parquet e loga a operação.
-    """
+    # Validação dos parâmetros
+    if not isinstance(df, DataFrame):
+        logging.error(f"Objeto passado não é um DataFrame Spark: {type(df)}")
+        return False
+
+    if not path:
+        logging.error("Caminho de destino não pode ser vazio")
+        return False
+
+    # Configuração
+    current_date = datetime.now().strftime('%Y%m%d')
+    full_path = Path(path)
+
     try:
-        schema = apple_store_schema_silver()
+        # Aplicar schema se fornecido
+        if schema:
+            logging.info(f"[*] Aplicando schema para dados {label}")
+            df = get_schema(df, schema)
 
-        # Alinhar o DataFrame ao schema definido
-        df = get_schema(df, schema)
+        # Adicionar coluna de partição
+        df_partition = df.withColumn(partition_column, lit(current_date))
 
-        if df.limit(1).count() > 0:  # Verificar existência de dados
-            logging.info(f"[*] Salvando dados {label} para: {path}")
-            # Verifica se o diretório existe e cria-o se não existir
-            Path(path).mkdir(parents=True, exist_ok=True)
+        # Verificar se há dados
+        if not df_partition.head(1):
+            logging.warning(f"[*] Nenhum dado {label} encontrado para salvar")
+            return False
 
-            df.write.option("compression", "snappy").mode("overwrite").parquet(path)
-            logging.info(f"[*] Dados salvos em {path} no formato Parquet")
+        # Preparar diretório
+        try:
+            full_path.mkdir(parents=True, exist_ok=True)
+            logging.debug(f"[*] Diretório {full_path} verificado/criado")
+        except Exception as dir_error:
+            logging.error(f"[*] Falha ao preparar diretório {full_path}: {dir_error}")
+            raise IOError(f"[*] Erro de diretório: {dir_error}") from dir_error
+
+        # Escrever dados
+        logging.info(f"[*] Salvando {df_partition.count()} registros ({label}) em {full_path}")
+
+        (df_partition.write
+         .option("compression", compression)
+         .mode("overwrite")
+         .partitionBy(partition_column)
+         .parquet(str(full_path)))
+
+        logging.info(f"[*] Dados {label} salvos com sucesso em {full_path}")
+        return True
+
+    except Exception as e:
+        error_msg = f"[*] Falha ao salvar dados {label} em {full_path}"
+        logging.error(error_msg, exc_info=True)
+        logging.error(f"[*] Detalhes do erro: {str(e)}\n{traceback.format_exc()}")
+        return False
+
+def save_metrics(metrics_type: str,
+                 index: str,
+                 error: Optional[Exception] = None,
+                 df: Optional[DataFrame] = None,
+                 metrics_data: Optional[Union[dict, str]] = None) -> None:
+    """
+    Salva métricas no Elasticsearch mantendo estruturas específicas para cada tipo.
+
+    Parâmetros:
+        metrics_type: 'success' ou 'fail' (case insensitive)
+        index: Nome do índice no Elasticsearch
+        error: Objeto de exceção (obrigatório para tipo 'fail')
+        client: Nome do cliente (opcional)
+        metrics_data: Dados das métricas (obrigatório para 'success', ignorado para 'fail')
+
+    Estruturas:
+        - FAIL: Mantém estrutura fixa com informações de erro
+        - SUCCESS: Mantém exatamente o que foi passado em metrics_data
+    """
+    # Converter para minúsculas para padronização
+    metrics_type = metrics_type.lower()
+
+    # Validações iniciais
+    if metrics_type not in ('success', 'fail'):
+        raise ValueError("[*] O tipo deve ser 'success' ou 'fail'")
+
+    if metrics_type == 'fail' and not error:
+        raise ValueError("[*] Para tipo 'fail', o parâmetro 'error' é obrigatório")
+
+    if metrics_type == 'success' and not metrics_data:
+        raise ValueError("[*] Para tipo 'success', 'metrics_data' é obrigatório")
+
+    # Configuração do Elasticsearch
+    ES_HOST = os.getenv("ES_HOST", "http://elasticsearch:9200")
+    ES_USER = os.getenv("ES_USER")
+    ES_PASS = os.getenv("ES_PASS")
+
+    if not all([ES_USER, ES_PASS]):
+        raise ValueError("[*] Credenciais do Elasticsearch não configuradas")
+
+    # Construção do documento
+    if metrics_type == 'fail':
+        try:
+            segmentos_unicos = [row["segmento"] for row in df.select("segmento").distinct().collect()] if df else ["UNKNOWN_CLIENT"]
+        except Exception:
+            logging.warning("[*] Não foi possível extrair segmentos. Usando 'UNKNOWN_CLIENT'.")
+            segmentos_unicos = ["UNKNOWN_CLIENT"]
+
+        document = {
+            "timestamp": datetime.now().isoformat(),
+            "layer": "silver",
+            "project": "compass",
+            "job": "apple_store_reviews",
+            "priority": "0",
+            "tower": "SBBR_COMPASS",
+            "client": segmentos_unicos,
+            "error": str(error) if error else "Erro desconhecido"
+        }
+    else:
+        if isinstance(metrics_data, str):
+            try:
+                document = json.loads(metrics_data)
+            except json.JSONDecodeError as e:
+                raise ValueError("[*] metrics_data não é um JSON válido") from e
         else:
-            logging.warning(f"[*] Nenhum dado {label} foi encontrado!")
-    except Exception as e:
-        logging.error(f"[*] Erro ao salvar dados {label}: {e}", exc_info=True)
-        log_error(e, df)
+            document = metrics_data
 
-def save_metrics(metrics_json, df):
-    """
-    Salva as métricas.
-    """
-
-    ES_HOST = "http://elasticsearch:9200"
-    ES_INDEX = "compass_dt_datametrics"
-    ES_USER = os.environ["ES_USER"]
-    ES_PASS = os.environ["ES_PASS"]
-
-    # Conectar ao Elasticsearch
-    es = Elasticsearch(
-        [ES_HOST],
-        basic_auth=(ES_USER, ES_PASS)
-    )
-
+    # Conexão e envio para Elasticsearch
     try:
-        # Converter JSON em dicionário
-        metrics_data = json.loads(metrics_json)
+        es = Elasticsearch(
+            hosts=[ES_HOST],
+            basic_auth=(ES_USER, ES_PASS),
+            request_timeout=30
+        )
 
-        # Inserir no Elasticsearch
-        response = es.index(index=ES_INDEX, document=metrics_data)
+        response = es.index(
+            index=index,
+            document=document
+        )
 
-        logging.info(f"[*] Métricas da aplicação salvas no Elasticsearch: {response}")
-    except json.JSONDecodeError as e:
-        logging.error(f"[*] Erro ao processar métricas: {e}", exc_info=True)
-        log_error(e, df)
+        logging.info(f"[*] Métricas salvas com sucesso no índice {index}. ID: {response['_id']}")
+        return response
 
+    except Exception as es_error:
+        logging.error(f"[*] Falha ao salvar no Elasticsearch: {str(es_error)}")
+        raise
     except Exception as e:
-        logging.error(f"[*] Erro ao salvar métricas no Elasticsearch: {e}", exc_info=True)
-
-def save_metrics_job_fail(metrics_json):
-    """
-    Salva as métricas de aplicações com falhas
-    """
-
-    ES_HOST = "http://elasticsearch:9200"
-    ES_INDEX = "compass_dt_datametrics_fail"
-    ES_USER = os.environ["ES_USER"]
-    ES_PASS = os.environ["ES_PASS"]
-
-    # Conectar ao Elasticsearch
-    es = Elasticsearch(
-        [ES_HOST],
-        basic_auth=(ES_USER, ES_PASS)
-    )
-
-    try:
-        # Converter JSON em dicionário
-        metrics_data = json.loads(metrics_json)
-
-        # Inserir no Elasticsearch
-        response = es.index(index=ES_INDEX, document=metrics_data)
-
-        logging.info(f"[*] Métricas da aplicação salvas no Elasticsearch: {response}")
-    except json.JSONDecodeError as e:
-        logging.error(f"[*] Erro ao processar métricas: {e}", exc_info=True)
-    except Exception as e:
-        logging.error(f"[*] Erro ao salvar métricas no Elasticsearch: {e}", exc_info=True)
-
-def write_to_mongo(dados_feedback: dict, table_id: str):
-    """
-    Salva os dados no MongoDB, obtendo as credenciais pelas variaveis de ambiente.
-    Args:
-        dados_feedback (dict): DataFrame PySpark contendo as avaliações.
-        table_id (str): Caminho do diretório onde os dados serão salvos.
-    """
-
-    mongo_user = os.environ["MONGO_USER"]
-    mongo_pass = os.environ["MONGO_PASS"]
-    mongo_host = os.environ["MONGO_HOST"]
-    mongo_port = os.environ["MONGO_PORT"]
-    mongo_db = os.environ["MONGO_DB"]
-
-    # ---------------------------------------------- Escapar nome de usuário e senha ----------------------------------------------
-    # A função quote_plus transforma caracteres especiais em seu equivalente escapado, de modo que o 
-    # URI seja aceito pelo MongoDB. Por exemplo, m@ngo será convertido para m%40ngo.
-    escaped_user = quote_plus(mongo_user)
-    escaped_pass = quote_plus(mongo_pass)
-
-
-    # ---------------------------------------------- Conexão com MongoDB ----------------------------------------------------------
-    # Quando definimos maxPoolSize=1, estamos dizendo ao MongoDB para manter apenas uma conexão aberta no pool. 
-    # Isso implica que cada vez que uma nova operação precisa de uma conexão, a conexão existente será 
-    # reutilizada em vez de criar uma nova.
-    mongo_uri = f"mongodb://{escaped_user}:{escaped_pass}@{mongo_host}:{mongo_port}/{mongo_db}?authSource={mongo_db}&maxPoolSize=1"
-
-    client = pymongo.MongoClient(mongo_uri)
-
-    try:
-        db = client[mongo_db]
-        collection = db[table_id]
-
-        # Inserir dados no MongoDB
-        if isinstance(dados_feedback, dict):  # Verifica se os dados são um dicionário
-            collection.insert_one(dados_feedback)
-        elif isinstance(dados_feedback, list):  # Verifica se os dados são uma lista
-            collection.insert_many(dados_feedback)
-        else:
-            print("[*] Os dados devem ser um dicionário ou uma lista de dicionários.")
-    finally:
-        # Garante que a conexão será fechada
-        client.close()
-
- 
+        logging.error(f"[*] Erro inesperado: {str(e)}")
+        raise
 
 def path_exists() -> bool:
 
@@ -232,7 +246,7 @@ def path_exists() -> bool:
     hdfs_path_exists = os.system(f"hadoop fs -test -e {historical_data_path} ") == 0
 
     if not hdfs_path_exists:
-        print(f"[*] O caminho {historical_data_path} não existe no HDFS.")
+        logging.warning(f"[*] O caminho {historical_data_path} não existe no HDFS.")
         return False  # Retorna False se o caminho não existir no HDFS
 
     try:
@@ -244,17 +258,17 @@ def path_exists() -> bool:
 
         # Verificar se há partições "odate="
         if "odate=" in result.stdout:
-            print("[*] Partições 'odate=*' encontradas no HDFS.")
+            logging.info("[*] Partições 'odate=*' encontradas no HDFS.")
             return True  # Retorna True se as partições forem encontradas
         else:
-            print("[*] Nenhuma partição com 'odate=*' foi encontrada no HDFS.")
+            logging.info("[*] Nenhuma partição com 'odate=*' foi encontrada no HDFS.")
             return False  # Retorna False se não houver partições
 
     except subprocess.CalledProcessError as e:
-        print(f"Erro ao acessar o HDFS: {e.stderr}")
+        logging.error(f"Erro ao acessar o HDFS: {e.stderr}")
         return False  # Retorna False se ocorrer erro ao acessar o HDFS
     except Exception as e:
-        print(f"Ocorreu um erro inesperado: {str(e)}")
+        logging.error(f"Ocorreu um erro inesperado: {str(e)}")
         return False  # Retorna False para outros erros
 
 
