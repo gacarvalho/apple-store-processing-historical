@@ -77,10 +77,6 @@ def read_and_union_data(spark: SparkSession, config: PipelineConfig) -> DataFram
 
 def process_and_validate_data(spark: SparkSession, df: DataFrame, config: PipelineConfig) -> Tuple[DataFrame, DataFrame, dict]:
     """[*] Processar e validar dados com coleta de métricas"""
-    metrics_collector = MetricsCollector(spark)
-    metrics_collector.start_collection()
-    collection_started = True
-
     try:
         logger.info("[*] Processando dados de avaliações")
         df_processed = processing_reviews(df)
@@ -96,12 +92,9 @@ def process_and_validate_data(spark: SparkSession, df: DataFrame, config: Pipeli
 
         return valid_df, invalid_df, validation_results
     except Exception as e:
-        collection_started = False
         logger.error(f"[*] Erro durante o processamento/validação: {str(e)}")
         raise
-    finally:
-        if collection_started:
-            metrics_collector.end_collection()
+
 
 def save_output_data(valid_df: DataFrame, invalid_df: DataFrame, config: PipelineConfig) -> None:
     """Salvar dados de saida com tratamento de erros adequado"""
@@ -132,12 +125,15 @@ def execute_pipeline(spark: SparkSession, config: PipelineConfig) -> None:
     """Executa o pipeline completo"""
     try:
         # Pipeline steps
+        metrics_collector = MetricsCollector(spark)
+        metrics_collector.start_collection()
+
         source_df = read_and_union_data(spark, config)
         valid_df, invalid_df, validation_results = process_and_validate_data(spark, source_df, config)
         save_output_data(valid_df, invalid_df, config)
 
-        # Metrics collection and saving
-        metrics_collector = MetricsCollector(spark)
+        metrics_collector.end_collection()
+
         metrics_json = metrics_collector.collect_metrics(
             valid_df, invalid_df, validation_results, "silver_apple_store"
         )
