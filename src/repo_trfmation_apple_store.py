@@ -79,6 +79,7 @@ def process_and_validate_data(spark: SparkSession, df: DataFrame, config: Pipeli
     """[*] Processar e validar dados com coleta de métricas"""
     metrics_collector = MetricsCollector(spark)
     metrics_collector.start_collection()
+    collection_started = True
 
     try:
         logger.info("[*] Processando dados de avaliações")
@@ -94,8 +95,13 @@ def process_and_validate_data(spark: SparkSession, df: DataFrame, config: Pipeli
             invalid_df.take(10)
 
         return valid_df, invalid_df, validation_results
+    except Exception as e:
+        collection_started = False
+        logger.error(f"[*] Erro durante o processamento/validação: {str(e)}")
+        raise
     finally:
-        metrics_collector.end_collection()
+        if collection_started:
+            metrics_collector.end_collection()
 
 def save_output_data(valid_df: DataFrame, invalid_df: DataFrame, config: PipelineConfig) -> None:
     """Salvar dados de saida com tratamento de erros adequado"""
