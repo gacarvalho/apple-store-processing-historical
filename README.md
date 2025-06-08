@@ -3,7 +3,7 @@
 
 <p align="left">
   <img src="https://img.shields.io/badge/projeto-Compass-blue?style=flat-square" alt="Projeto">
-  <img src="https://img.shields.io/badge/versão-1.0.0-blue?style=flat-square" alt="Versão">
+  <img src="https://img.shields.io/badge/versão aplicação-1.0.1-blue?style=flat-square" alt="Versão Aplicação">
   <img src="https://img.shields.io/badge/status-deployed-green?style=flat-square" alt="Status">
   <img src="https://img.shields.io/badge/autor-Gabriel_Carvalho-lightgrey?style=flat-square" alt="Autor">
 </p>
