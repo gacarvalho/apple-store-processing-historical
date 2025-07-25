@@ -22,10 +22,14 @@ COPY spark-submit.sh /app/spark-submit.sh
 COPY requirements.txt /app/requirements.txt
 
 
-# Instalar o zip e as dependências do requirements.txt
-RUN apt-get update && apt-get install -y zip \
+# Corrigir os repositórios desatualizados do Debian Buster
+RUN sed -i 's|http://deb.debian.org/debian|http://archive.debian.org/debian|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.debian.org/debian-security|http://archive.debian.org/debian-security|g' /etc/apt/sources.list \
+    && apt-get update -o Acquire::Check-Valid-Until=false \
+    && apt-get install -y zip \
     && python3 -m pip install --upgrade pip \
     && pip install --no-cache-dir -r /app/requirements.txt
+
 
 # Criar o arquivo .zip com as dependências Python
 RUN pip install --target /app/dependencies -r /app/requirements.txt \
