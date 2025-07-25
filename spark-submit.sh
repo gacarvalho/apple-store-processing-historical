@@ -78,6 +78,7 @@ run_spark_submit() {
     --conf spark.yarn.appMasterEnv.ES_USER=$ES_USER \
     --conf spark.yarn.appMasterEnv.ES_PASS=$ES_PASS \
     --name dmc_silver_reviews_apple_store_$CONFIG_ENV \
+    --conf spark.sql.sources.partitionOverwriteMode=dynamic \
     /app/repo_trfmation_apple_store.py $CONFIG_ENV"
 
   # Exibe o comando para depuração

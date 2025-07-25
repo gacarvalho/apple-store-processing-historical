@@ -18,7 +18,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 from urllib.parse import quote_plus
-
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
@@ -129,7 +128,7 @@ def save_dataframe(
     ) -> bool:
     """
     Salva um DataFrame Spark no formato Parquet de forma robusta.
-    
+
     Args:
         df: DataFrame a ser salvo
         path: Caminho de destino
@@ -137,10 +136,10 @@ def save_dataframe(
         schema: Schema opcional para validação
         partition_column: Coluna de partição
         compression: Tipo de compressão
-        
+
     Returns:
         bool: True se salvou com sucesso, False caso contrário
-        
+
     Raises:
         ValueError: Se os parâmetros forem inválidos
         IOError: Se houver problemas ao escrever no filesystem
