@@ -23,7 +23,7 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
     coalesce, collect_list, struct, array, col,
     count, when, to_date, regexp_extract,
-    input_file_name, lit
+    input_file_name, lit, broadcast, rand, floor
 )
 from pyspark.sql.utils import AnalysisException
 from pyspark.sql.types import (
@@ -346,10 +346,41 @@ def processing_old_new(spark: SparkSession, df: DataFrame) -> DataFrame:
     if 'segmento' not in df_historical.columns:
         df_historical = df_historical.withColumn("segmento", lit("NA"))
 
-    new_reviews_df_alias = df.alias("new")
-    historical_reviews_df_alias = df_historical.alias("old")
 
-    joined_reviews_df = new_reviews_df_alias.join(historical_reviews_df_alias, "id", "outer")
+    """
+    Aplicamos Salting que é técnica para evitar skew (desequilíbrio de diff de dados (files=particoes) no join.
+    
+        -> Adicionamos uma coluna extra com valores aleatórios (salt) para dividir a chave principal, distribuindo melhor os dados entre as tasks do Spark.
+        -> Por exemplo: se a chave do join for 'id' e adicionarmos um 'salt' de 0 a 9, o join passa a ser feito por ('id', 'salt') em vez de apenas 'id'.
+    
+        Isso distribui melhor os dados entre as tasks do Spark, evitando sobrecarga em uma única partição.
+    
+    Após o join, a coluna 'salt' é removida para manter a integridade dos dados.
+    """
+
+    max_broadcast_size_mb = 50
+
+    # Estimativa simples em bytes do histórico
+    size_in_bytes = df_historical.rdd.map(lambda r: len(str(r))).sum()
+    size_in_mb = size_in_bytes / (1024 * 1024)
+
+    if size_in_mb <= max_broadcast_size_mb:
+        # Se o DataFrame histórico for pequeno (até 64MB), usamos broadcast join.
+        # O Spark envia o histórico para todos os executores, evitando shuffle.
+        # Isso melhora a performance e evita problemas com partições desbalanceadas,
+        # onde os dados antigos são leves e os dados novos são muito pesados.
+        joined_reviews_df = df.alias("new").join(broadcast(df_historical).alias("old"), "id", "outer")
+    else:
+        # Se o histórico for grande, usamos salting para evitar skew no join.
+        # Adicionamos uma coluna 'salt' com valores aleatórios de 0 a 9 em ambos os DataFrames.
+        # O join é feito por (id, salt), espalhando a carga entre várias partições.
+        # Isso distribui melhor os dados, evitando que uma única chave sobrecarregue uma task.
+        salt_count = 10
+        df_salted = df.withColumn("salt", (floor(rand() * salt_count)).cast("int"))
+        df_hist_salted = df_historical.withColumn("salt", (floor(rand() * salt_count)).cast("int"))
+
+        joined_reviews_df = df_salted.alias("new").join(df_hist_salted.alias("old"),(col("new.id") == col("old.id")) & (col("new.salt") == col("old.salt")),"outer").drop("new.salt", "old.salt")
+
 
     result_df = joined_reviews_df \
         .withColumn(
